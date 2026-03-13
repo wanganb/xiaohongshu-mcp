@@ -23,6 +23,7 @@ type PublishImageContent struct {
 	ImagePaths   []string
 	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
 	IsOriginal   bool       // 是否声明原创
+	AigcFlag     bool       // 笔记是否含AI合成内容
 	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products     []string   // 商品关键词列表，用于绑定带货商品
 }
@@ -85,9 +86,9 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		tags = tags[:10]
 	}
 
-	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, visibility=%s, products=%v", content.Title, len(content.ImagePaths), tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products)
+	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, aigc=%v, visibility=%s, products=%v", content.Title, len(content.ImagePaths), tags, content.ScheduleTime, content.IsOriginal, content.AigcFlag, content.Visibility, content.Products)
 
-	if err := submitPublish(page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products); err != nil {
+	if err := submitPublish(page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.AigcFlag, content.Visibility, content.Products); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -271,7 +272,7 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string) error {
+func submitPublish(page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, aigcFlag bool, visibility string, products []string) error {
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
 		return errors.Wrap(err, "查找标题输入框失败")
@@ -330,6 +331,15 @@ func submitPublish(page *rod.Page, title, content string, tags []string, schedul
 			slog.Warn("设置原创声明失败，继续发布", "error", err)
 		} else {
 			slog.Info("已声明原创")
+		}
+	}
+
+	// 笔记是否含AI合成内容
+	if aigcFlag {
+		if err := setAigcFlag(page); err != nil {
+			slog.Warn("设置笔记含AI合成内容声明失败，继续发布", "error", err)
+		} else {
+			slog.Info("已设置笔记含AI合成内容")
 		}
 	}
 
@@ -755,6 +765,74 @@ func setOriginal(page *rod.Page) error {
 	}
 
 	return errors.New("未找到原创声明选项")
+}
+
+// setAigcFlag 笔记含AI合成内容
+func setAigcFlag(page *rod.Page) error {
+	// 根据小红书创作者页面的实际结构：
+	// 点击 div.declaration-wrapper 包含div.d-text 文本为“添加内容类型声明”的元素
+	// 设置选项是 div.d-option-description 包含 span.d-text 文本为“笔记含AI合成内容”元素
+
+	// 查找包含"原创声明"文本的 d-option-description
+	descriptionCards, err := page.Elements("div[lass=\"declaration-wrapper\"]")
+	if err != nil {
+		return errors.Wrap(err, "内容类型声明卡片失败")
+	}
+
+	for _, card := range descriptionCards {
+		text, err := card.Text()
+		if err != nil {
+			continue
+		}
+
+		// 检查是否添加内容类型声明卡片
+		if !strings.Contains(text, "添加内容类型声明") {
+			continue
+		}
+
+		// 点击声明卡片
+		if err := card.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return errors.Wrap(err, "点击添加内容类型声明卡片失败")
+		}
+
+		time.Sleep(500 * time.Millisecond)
+
+		descriptionOptions, err := page.Elements("div.d-option-description")
+		if err != nil {
+			return errors.Wrap(err, "内容类型声明选项查找失败")
+		}
+		for _, optionCard := range descriptionOptions {
+			optionText, err := optionCard.Text()
+			if err != nil {
+				continue
+			}
+			if !strings.Contains(optionText, "笔记含AI合成内容") {
+				continue
+			}
+
+			// 点击声明选项
+			if err := optionCard.Click(proto.InputMouseButtonLeft, 1); err != nil {
+				return errors.Wrap(err, "点击笔记含AI合成内容选项失败")
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		// 检查选项是否已经设置
+		// 重新检查div.declaration-wrapper元素文本内容，设置成功后应为：笔记含AI合成内容
+		setAfterText, err := card.Text()
+		if err != nil {
+			continue
+		}
+		//设置失败，返回错误
+		if !strings.Contains(setAfterText, "笔记含AI合成内容") {
+			return errors.Wrap(err, "设置笔记含AI合成内容失败")
+		}
+		//设置成功，返回 nil
+		slog.Info("设置笔记含AI合成内容成功")
+		return nil
+	}
+
+	return errors.New("设置笔记含AI合成内容失败")
 }
 
 // confirmOriginalDeclaration 处理原创声明确认弹窗

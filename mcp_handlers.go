@@ -159,7 +159,10 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	// 解析原创参数
 	isOriginal, _ := args["is_original"].(bool)
 
-	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, visibility, products)
+	// 解析笔记是否包含含AI合成内容
+	aigcFlag, _ := args["aigc_flag"].(bool)
+
+	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, AIGC: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, aigcFlag, visibility, products)
 
 	// 构建发布请求
 	req := &PublishRequest{
@@ -169,6 +172,7 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 		Tags:       tags,
 		ScheduleAt: scheduleAt,
 		IsOriginal: isOriginal,
+		AigcFlag:   aigcFlag,
 		Visibility: visibility,
 		Products:   products,
 	}
